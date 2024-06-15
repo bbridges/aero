@@ -1,27 +1,26 @@
-// Fizzbuzz using boolean expressions.
-func fizzbuzz_1(x: int) -> str {
-  when {
-    x % 3 == 0 and x % 5 == 0 => "fizzbuzz"
-    x % 3 == 0                => "fizz"
-    x % 5 == 0                => "buzz"
-    true                      => "neither"
-  }
-}
+; Fizzbuzz using boolean expressions.
+(func fizzbuzz-1 [x Int] -> Str do:
+  (if (and x % 3 == 0, x % 5 == 0) => "fizzbuzz"
+      x % 3 == 0                   => "fizz"
+      x % 5 == 0                   => "buzz"
+      else:                           (->Str x)
+  )
+)
 
-// Fizzbuzz using pattern matching.
-func fizzbuzz_2(x: int) -> str {
-  (x % 3, x % 5) match {
-    0, 0 => "fizzbuzz"
-    0, _ => "fizz"
-    _, 0 => "buzz"
-    _    => "neither"
-  }
-}
+; Fizzbuzz using pattern matching.
+(func fizzbuzz-2 [x Int] -> Str do:
+  (match {[x % 3] [x % 5]}
+    {0 0} => "fizzbuzz"
+    {0 _} => "fizz"
+    {_ 0} => "buzz"
+    _     => (->Str x)
+  )
+)
 
-pub func main() ->> () {
-  log fizzbuzz_1(3)
-  log fizzbuzz_1(5)
+(main do:
+  (log (fizzbuzz-1 3))
+  (log (fizzbuzz-1 5))
 
-  log fizzbuzz_2(15)
-  log fizzbuzz_2(7)
-}
+  (log (fizzbuzz-2 15))
+  (log (fizzbuzz-2 7))
+)
