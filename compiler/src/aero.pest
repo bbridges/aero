@@ -1,19 +1,19 @@
-source = { SOI ~ ws? ~ defs? ~ ws? ~ EOI }
+Source = { SOI ~ Ws? ~ Defs? ~ Ws? ~ EOI }
 
 /// --- Definitions ---
 
-def = _{ main_def | func_def }
-defs = _{ def ~ (ws ~ def)* }
+Def = _{ MainDef | FuncDef }
+Defs = _{ Def ~ (Ws ~ Def)* }
 
-main_def = {
-    "(" ~ ws? ~ "main" ~ ws ~
-    "do:" ~ ws ~ block? ~ ws? ~
+MainDef = {
+    "(" ~ Ws? ~ "main" ~ Ws ~
+    "do:" ~ Ws ~ Block? ~ Ws? ~
     ")"
 }
-func_def = {
-    "(" ~ ws? ~ "func" ~ ws ~ ident ~
-    (ws ~ ascription | label ~ ws ~ ascription)* ~ ws ~ "->" ~ ws ~ block ~ ws ~
-    "do:" ~ ws ~ block? ~ ws? ~
+FuncDef = {
+    "(" ~ Ws? ~ "func" ~ Ws ~ Ident ~
+    (Ws ~ Ascription | Label ~ Ws ~ Ascription)* ~ Ws ~ "->" ~ Ws ~ Block ~ Ws ~
+    "do:" ~ Ws ~ Block? ~ Ws? ~
     ")"
 }
 
@@ -25,153 +25,153 @@ func_def = {
 // Infix operators must also have spaces around them. This allows for the
 // grammar to unambiguous with blocks, where infix forms are joined on commas
 // or on newlines where there is no next infix operator.
-form = { prefix? ~ primary ~ postfix? }
-forms = _{ form ~ (ws ~ form)* }
+Form = { PrefixOp? ~ Primary ~ PostfixOp? }
+Forms = _{ Form ~ (Ws ~ Form)* }
 
-infix_form = {
-    prefix? ~ primary ~ postfix? ~
-    (ws ~ infix ~ ws ~ prefix? ~ primary ~ postfix?)*
+InfixForm = {
+    PrefixOp? ~ Primary ~ PostfixOp? ~
+    (Ws ~ InfixOp ~ Ws ~ PrefixOp? ~ Primary ~ PostfixOp?)*
 }
 
-block = { infix_form ~ (block_break ~ infix_form)* }
-block_break = _{ ws? ~ "," ~ ws | space* ~ comment? ~ newline ~ ws? }
+Block = { BlockForm ~ (BlockBreak ~ BlockForm)* }
+BlockForm = _{ BindingForm | InfixForm }
+BindingForm = {
+    Form ~ (Ws ~ (Assign | ArrowL) ~ Ws ~ InfixForm)+
+}
+BlockBreak = _{ Ws? ~ "," ~ Ws | Space* ~ Comment? ~ Newline ~ Ws? }
 
-primary = _{
-    scope | call_like |
-    collection | lit |
-    global_path | local_path | ident | discard
+Primary = _{
+    Scope | CallLike |
+    Collection | Lit |
+    GlobalPath | LocalPath | Ident | Discard
 }
 
-ascription = { "[" ~ ws? ~ ident ~ ws ~ form ~ ws? ~ "]" }
-scope = { "[" ~ ws? ~ infix_form ~ ws? ~ "]" }
+Ascription = { "[" ~ Ws? ~ Ident ~ Ws ~ Form ~ Ws? ~ "]" }
+Scope = { "[" ~ Ws? ~ InfixForm ~ Ws? ~ "]" }
 
 // --- Calls ---
 
-call_like = _{
-    and_expr | or_expr | not_expr |
-    do_expr |
-    if_expr | match_expr | log_expr |
-    call |
-    lambda
+CallLike = _{
+    DoExpr | IfExpr | MatchExpr | LogExpr |
+    Call |
+    Lambda
 }
 
-and_expr = { "(" ~ ws? ~ "and" ~ ws ~ block ~ ws? ~ ")" }
-or_expr = { "(" ~ ws? ~ "or" ~ ws ~ block ~ ws? ~ ")" }
-not_expr = { "(" ~ ws? ~ "not" ~ ws ~ infix_form ~ ws? ~ ")" }
-do_expr = { "(" ~  ws? ~ "do" ~ ws ~ block? ~ ws? ~ ")"}
-if_expr = {
-    "(" ~ ws? ~ "if" ~ ws ~
-    block ~ (ws ~ "else:" ~ ws ~ form)? ~ ws? ~
+DoExpr = { "(" ~  Ws? ~ "do" ~ Ws ~ Block? ~ Ws? ~ ")"}
+IfExpr = {
+    "(" ~ Ws? ~ "if" ~ Ws ~
+    Block ~ (Ws ~ "else:" ~ Ws ~ Form)? ~ Ws? ~
     ")"
 }
-match_expr = {
-    "(" ~ ws? ~ "match" ~ ws ~ form ~ ws ~
-    block ~ ws? ~
+MatchExpr = {
+    "(" ~ Ws? ~ "match" ~ Ws ~ Form ~ Ws ~
+    Block ~ Ws? ~
     ")"
 }
-log_expr = { "(" ~ ws? ~ "log" ~ ws ~ forms ~ ws? ~ ")" }
+LogExpr = { "(" ~ Ws? ~ "log" ~ Ws ~ Forms ~ Ws? ~ ")" }
 
-call = { "(" ~ ws? ~ !(macro_expr ~ ws) ~ forms ~ ws? ~ ")" }
+Call = { "(" ~ Ws? ~ !(MacroExpr ~ Ws) ~ Forms ~ Ws? ~ ")" }
 // Prevent macros from falling back onto normal calls.
-macro_expr = { "and" | "or" | "not" | "if" | "match" }
+MacroExpr = { "do" | "if" | "match" }
 
-lambda = { "\\(" ~ ws? ~ block ~ ws? ~ ")" }
+Lambda = { "\\(" ~ Ws? ~ Block ~ Ws? ~ ")" }
 
 // --- Collections ---
 
-collection = _{ tuple }
+Collection = _{ Tuple }
 
-tuple = { "{" ~ ws? ~ forms ~ ws? ~ "}" }
+Tuple = { "{" ~ Ws? ~ Forms ~ Ws? ~ "}" }
 
 // --- Literals ---
 
-lit = _{ int_lit | sym_lit | str_lit }
+Lit = _{ IntLit | SymLit | StrLit }
 
-int_lit = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* | ASCII_DIGIT }
-//float_lit = {}
-sym_lit = @{ "." ~ name ~ ("/" ~ name)* }
-str_lit = { single_str_lit }
-//char_lit = {}
+IntLit = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* | ASCII_DIGIT }
+//FloatLit = {}
+SymLit = @{ "." ~ Name ~ ("/" ~ Name)* }
+StrLit = { SingleStrLit }
+//CharLit = {}
 
-single_str_lit = _{ "\"" ~ str_segment ~ "\"" }
-str_segment = { (!"\"" ~ ANY)* }
+SingleStrLit = _{ "\"" ~ StrSegment ~ "\"" }
+StrSegment = { (!"\"" ~ ANY)* }
 
 // --- Names ---
 
 // We have to be careful to not try to match a label when we shouldn't,
 // otherwise parsing infix expressions gets stuck on labels.
-global_path = { ("/" ~ name)+ }
-local_path = { !label ~ name ~ ("/" ~ name)+ }
-ident = @{ !label ~ name }
-discard = @{ "_" ~ ident? }
+GlobalPath = { ("/" ~ Name)+ }
+LocalPath = { !Label ~ Name ~ ("/" ~ Name)+ }
+Ident = @{ !Label ~ Name }
+Discard = @{ "_" ~ Ident? }
 
-label = @{ name ~ ("/" ~ name)* ~ ":" }
+Label = @{ Name ~ ("/" ~ Name)* ~ ":" }
 
-name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-")* }
+Name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-")* }
 
 // --- Operators ---
 
-prefix = _{
+// Special operators.
+ArrowL = { "<-" }
+ArrowR = { "->" }
+Assoc = { "=>" }
+Assign = { "=" }
+
+PrefixOp = _{
     // Width 3.
-    bit_not |
-    // Width 2.
-    arrow_r |
+    BitNot |
     // Width 1.
-    pos | neg | pin | unquote
+    BoolNot | Pos | Neg | Pin
 }
 
-bit_not = { "~~~" }
-pos = { "+" }
-neg = { "-" }
-pin = { "^" }
-unquote = { "~" }
+BitNot = { "~~~" }
+BoolNot = { "~" }
+Pos = { "+" }
+Neg = { "-" }
+Pin = { "^" }
 
-infix = _{
+InfixOp = _{
     // Width 3.
-    bit_and | bit_or | bit_xor | bit_shl | bit_shr |
+    BitAnd | BitOr | BitXor | BitShl | BitShr |
     // Width 2.
-    assoc | arrow_r | arrow_l | eq | ne | le | ge | pow | concat |
+    BoolAnd | BoolOr | Eq | Ne | Le | Ge |
     // Width 1.
-    assign | pipe | amp | lt | gt | add | sub | mul | div | rem
+    TyAnd | TyOr | Lt | Gt | Add | Sub | Mul | Div | Rem | Pow
 }
 
-bit_and = { "&&&" }
-bit_or = { "|||" }
-bit_xor = { "^^^" }
-bit_shl = { "<<<" }
-bit_shr = { ">>>" }
-assoc = { "=>" }
-arrow_l = { "<-" }
-arrow_r = { "->" }
-eq = { "==" }
-ne = { "/=" }
-le = { "<=" }
-ge = { ">=" }
-pow = { "**" }
-concat = { "++" }
-assign = { "=" }
-pipe = { "|" }
-amp = { "&" }
-lt = { "<" }
-gt = { ">" }
-add = { "+" }
-sub = { "-" }
-mul = { "*" }
-div = { "/" }
-rem = { "%" }
+BitAnd = { "&&&" }
+BitOr = { "|||" }
+BitXor = { "^^^" }
+BitShl = { "<<<" }
+BitShr = { ">>>" }
+BoolAnd = { "&&" }
+BoolOr = { "||" }
+Eq = { "==" }
+Ne = { "~=" }
+Le = { "<=" }
+Ge = { ">=" }
+TyAnd = { "&" }
+TyOr = { "|" }
+Lt = { "<" }
+Gt = { ">" }
+Add = { "+" }
+Sub = { "-" }
+Mul = { "*" }
+Div = { "/" }
+Rem = { "%" }
+Pow = { "^" }
 
-postfix = _{
+PostfixOp = _{
     // Width 1.
-    res | opt
+    Opt | Res
 }
 
-res = { "!" }
-opt = { "?" }
+Opt = { "?" }
+Res = { "!" }
 
 // --- Whitespace ---
 
-ws = _{ (space | newline | comment)+ }
+Ws = _{ (Space | Newline | Comment)+ }
 
-space = _{ " " | "\t" }
-newline = _{ "\n" | "\r\n" | "\r" }
-comment = _{ ";" ~ (!newline ~ ANY)* }
+Space = _{ " " | "\t" }
+Newline = _{ "\n" | "\r\n" | "\r" }
+Comment = _{ ";" ~ (!Newline ~ ANY)* }

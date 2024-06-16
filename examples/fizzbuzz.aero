@@ -1,9 +1,9 @@
 ; Fizzbuzz using boolean expressions.
 (func fizzbuzz-1 [x Int] -> Str do:
-  (if (and x % 3 == 0, x % 5 == 0) => "fizzbuzz"
-      x % 3 == 0                   => "fizz"
-      x % 5 == 0                   => "buzz"
-      else:                           (->Str x)
+  (if x % 3 == 0 && x % 5 == 0 => "fizzbuzz"
+      x % 3 == 0               => "fizz"
+      x % 5 == 0               => "buzz"
+      else:                       (->Str x)
   )
 )
 

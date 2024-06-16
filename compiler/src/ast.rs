@@ -17,26 +17,23 @@ pub enum Expr<'a> {
     Log {
         message: Box<Form<'a, Expr<'a>>>,
     },
+    Block {
+        exprs: Vec<Form<'a, Expr<'a>>>,
+    },
+    Binding {
+        pat: Form<'a, Pat>,
+        op: Form<'a, BindingOp>,
+        expr: Box<Form<'a, Expr<'a>>>,
+    },
     Prefix {
         op: Form<'a, PrefixOp>,
-        value: Box<Form<'a, Expr<'a>>>,
+        expr: Box<Form<'a, Expr<'a>>>,
     },
     Infix {
         left: Box<Form<'a, Expr<'a>>>,
         op: Form<'a, InfixOp>,
         right: Box<Form<'a, Expr<'a>>>,
     },
-    Postfix {
-        value: Box<Form<'a, Expr<'a>>>,
-        op: Form<'a, PostfixOp>,
-    },
-    Block {
-        exprs: Vec<Form<'a, Expr<'a>>>,
-    },
-    Assign {
-        pat: Form<'a, Pat>,
-        expr: Box<Form<'a, Expr<'a>>>,
-    }
 }
 
 #[derive(Debug)]
@@ -58,12 +55,20 @@ pub struct Span<'a> {
 }
 
 #[derive(Debug)]
+pub enum BindingOp {
+    ArrowL,
+    ArrowR,
+    Assoc,
+    Assign,
+}
+
+#[derive(Debug)]
 pub enum PrefixOp {
     BitNot,
+    BoolNot,
     Pos,
     Neg,
     Pin,
-    Unquote,
 }
 
 #[derive(Debug)]
@@ -73,18 +78,15 @@ pub enum InfixOp {
     BitXor,
     BitShl,
     BitShr,
-    Assoc,
-    ArrowL,
-    ArrowR,
+    BoolAnd,
+    BoolOr,
     Eq,
     Ne,
     Le,
     Ge,
     Pow,
-    Concat,
-    Assign,
-    Pipe,
-    Amp,
+    TyAnd,
+    TyOr,
     Lt,
     Gt,
     Add,
@@ -96,6 +98,6 @@ pub enum InfixOp {
 
 #[derive(Debug)]
 pub enum PostfixOp {
-    Res,
     Opt,
+    Res,
 }
