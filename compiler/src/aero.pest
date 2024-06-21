@@ -1,177 +1,58 @@
-Source = { SOI ~ Ws? ~ Defs? ~ Ws? ~ EOI }
+Source = { SOI ~ Forms ~ EOI }
 
-/// --- Definitions ---
-
-Def = _{ MainDef | FuncDef }
-Defs = _{ Def ~ (Ws ~ Def)* }
-
-MainDef = {
-    "(" ~ Ws? ~ "main" ~ Ws ~
-    "do:" ~ Ws ~ Block? ~ Ws? ~
-    ")"
-}
-FuncDef = {
-    "(" ~ Ws? ~ "func" ~ Ws ~ Ident ~
-    (Ws ~ Ascription | Label ~ Ws ~ Ascription)* ~ Ws ~ "->" ~ Ws ~ Block ~ Ws ~
-    "do:" ~ Ws ~ Block? ~ Ws? ~
-    ")"
+// Forms are all separated by spaces and can include a prefix and a postfix.
+// Space separation allows prefixes and postfixes to not have ambiguity with
+// infixes. Newlines or commas between forms are marked by a `Sep` element
+// which can be used to separate expressions in a block when not immediately
+// followed by an infix `Op`.
+Forms = _{ Whitespace? ~ FormsInner? ~ Whitespace? }
+FormsInner = _{ WrappedForm ~ ((Space | Sep) ~ WrappedForm)* }
+WrappedForm = _{ Prefix? ~ Form ~ (Infix ~ Form)* ~ Postfix? }
+Form = _{
+  Int | Str |
+  Label | Sym | GlobalPath | LocalPath | Ident | Discard |
+  Parens | Bracks | Braces | Op
 }
 
-// --- Forms ---
+// The sign of an integer is attached directly instead of relying on a prefix
+// operator. The magnitude of the max value of a signed integer is one less than
+// the minimum, so you can't represent the minimum value with a prefix operator.
+// Parsing the sign ahead of time avoids this problem.
+Int = { (IntSignPos | IntSignNeg)? ~ IntSegment }
+IntSignPos = @{ "+" }
+IntSignNeg = @{ "-" }
+IntSegment = @{ ASCII_DIGIT+ ~ ("_"? ~ ASCII_DIGIT+)* }
 
-// A form can have a prefix and postfix with no spaces. Only one prefix and
-// can be applied.
-// Infix forms also allow infix operators in contexts where they are allowed.
-// Infix operators must also have spaces around them. This allows for the
-// grammar to unambiguous with blocks, where infix forms are joined on commas
-// or on newlines where there is no next infix operator.
-Form = { PrefixOp? ~ Primary ~ PostfixOp? }
-Forms = _{ Form ~ (Ws ~ Form)* }
+Str = { SingleStr }
+SingleStr = _{ "\"" ~ StrSegment ~ "\"" }
+StrSegment = @{ (!"\"" ~ ANY)* }
 
-InfixForm = {
-    PrefixOp? ~ Primary ~ PostfixOp? ~
-    (Ws ~ InfixOp ~ Ws ~ PrefixOp? ~ Primary ~ PostfixOp?)*
-}
-
-Block = { BlockForm ~ (BlockBreak ~ BlockForm)* }
-BlockForm = _{ BindingForm | InfixForm }
-BindingForm = {
-    Form ~ (Ws ~ (Assign | ArrowL) ~ Ws ~ InfixForm)+
-}
-BlockBreak = _{ Ws? ~ "," ~ Ws | Space* ~ Comment? ~ Newline ~ Ws? }
-
-Primary = _{
-    Scope | CallLike |
-    Collection | Lit |
-    GlobalPath | LocalPath | Ident | Discard
-}
-
-Ascription = { "[" ~ Ws? ~ Ident ~ Ws ~ Form ~ Ws? ~ "]" }
-Scope = { "[" ~ Ws? ~ InfixForm ~ Ws? ~ "]" }
-
-// --- Calls ---
-
-CallLike = _{
-    DoExpr | IfExpr | MatchExpr | LogExpr |
-    Call |
-    Lambda
-}
-
-DoExpr = { "(" ~  Ws? ~ "do" ~ Ws ~ Block? ~ Ws? ~ ")"}
-IfExpr = {
-    "(" ~ Ws? ~ "if" ~ Ws ~
-    Block ~ (Ws ~ "else:" ~ Ws ~ Form)? ~ Ws? ~
-    ")"
-}
-MatchExpr = {
-    "(" ~ Ws? ~ "match" ~ Ws ~ Form ~ Ws ~
-    Block ~ Ws? ~
-    ")"
-}
-LogExpr = { "(" ~ Ws? ~ "log" ~ Ws ~ Forms ~ Ws? ~ ")" }
-
-Call = { "(" ~ Ws? ~ !(MacroExpr ~ Ws) ~ Forms ~ Ws? ~ ")" }
-// Prevent macros from falling back onto normal calls.
-MacroExpr = { "do" | "if" | "match" }
-
-Lambda = { "\\(" ~ Ws? ~ Block ~ Ws? ~ ")" }
-
-// --- Collections ---
-
-Collection = _{ Tuple }
-
-Tuple = { "{" ~ Ws? ~ Forms ~ Ws? ~ "}" }
-
-// --- Literals ---
-
-Lit = _{ IntLit | SymLit | StrLit }
-
-IntLit = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* | ASCII_DIGIT }
-//FloatLit = {}
-SymLit = @{ "." ~ Name ~ ("/" ~ Name)* }
-StrLit = { SingleStrLit }
-//CharLit = {}
-
-SingleStrLit = _{ "\"" ~ StrSegment ~ "\"" }
-StrSegment = { (!"\"" ~ ANY)* }
-
-// --- Names ---
-
-// We have to be careful to not try to match a label when we shouldn't,
-// otherwise parsing infix expressions gets stuck on labels.
+Label = { Name ~ ":" }
+Sym = { "." ~ Name }
 GlobalPath = { ("/" ~ Name)+ }
-LocalPath = { !Label ~ Name ~ ("/" ~ Name)+ }
-Ident = @{ !Label ~ Name }
-Discard = @{ "_" ~ Ident? }
+LocalPath = { Name ~ ("/" ~ Name)+ }
+Ident = { Name }
+Discard = @{ "_" ~ Name? }
 
-Label = @{ Name ~ ("/" ~ Name)* ~ ":" }
+Name = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-")* }
 
-Name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-")* }
+Parens = { "(" ~ Forms ~ ")" }
+Bracks = { "[" ~ Forms ~ "]" }
+Braces = { "{" ~ Forms ~ "}" }
 
-// --- Operators ---
-
-// Special operators.
-ArrowL = { "<-" }
-ArrowR = { "->" }
-Assoc = { "=>" }
-Assign = { "=" }
-
-PrefixOp = _{
-    // Width 3.
-    BitNot |
-    // Width 1.
-    BoolNot | Pos | Neg | Pin
+Op = { OpChar+ }
+OpChar = _{
+  "~" | "!" | "@" | "#" | "$" | "%" | "^" | "&" | "*" | "-" | "=" | "+" | "\\" |
+  "|" | "<" | "." | ">" | "/" | "?"
 }
 
-BitNot = { "~~~" }
-BoolNot = { "~" }
-Pos = { "+" }
-Neg = { "-" }
-Pin = { "^" }
+Prefix = @{ Op ~ !(Whitespace | "," | EOI) }
+Infix = @{ Op ~ !(Whitespace | "," | EOI) }
+Postfix = @{ Op }
+Sep = @{ Newline | Whitespace? ~ "," ~ Whitespace }
 
-InfixOp = _{
-    // Width 3.
-    BitAnd | BitOr | BitXor | BitShl | BitShr |
-    // Width 2.
-    BoolAnd | BoolOr | Eq | Ne | Le | Ge |
-    // Width 1.
-    TyAnd | TyOr | Lt | Gt | Add | Sub | Mul | Div | Rem | Pow
+Whitespace = _{ Space | Newline }
+Space = _{ (" " | "\t")+ }
+Newline = _{
+  Space? ~ ((";" ~ (!("\n" | "\r") ~ ANY)*)? ~ ("\n" | "\r\n" | "\r") ~ Space?)+
 }
-
-BitAnd = { "&&&" }
-BitOr = { "|||" }
-BitXor = { "^^^" }
-BitShl = { "<<<" }
-BitShr = { ">>>" }
-BoolAnd = { "&&" }
-BoolOr = { "||" }
-Eq = { "==" }
-Ne = { "~=" }
-Le = { "<=" }
-Ge = { ">=" }
-TyAnd = { "&" }
-TyOr = { "|" }
-Lt = { "<" }
-Gt = { ">" }
-Add = { "+" }
-Sub = { "-" }
-Mul = { "*" }
-Div = { "/" }
-Rem = { "%" }
-Pow = { "^" }
-
-PostfixOp = _{
-    // Width 1.
-    Opt | Res
-}
-
-Opt = { "?" }
-Res = { "!" }
-
-// --- Whitespace ---
-
-Ws = _{ (Space | Newline | Comment)+ }
-
-Space = _{ " " | "\t" }
-Newline = _{ "\n" | "\r\n" | "\r" }
-Comment = _{ ";" ~ (!Newline ~ ANY)* }

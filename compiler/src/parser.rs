@@ -1,9 +1,8 @@
 use std::process::exit;
 
-use lazy_static::lazy_static;
-use pest::{iterators::Pair, pratt_parser::PrattParser, Parser};
+use pest::{iterators::Pair, Parser};
 
-use crate::ast::{BindingOp, Def, Expr, Form, InfixOp, Pat, PrefixOp, Source, Span};
+use crate::ast::{Form, FormData, IntData, PathSegment, Source, Span, StrData};
 
 mod aero {
     // The pest_derive macro makes "Rule" public, so placing this into a nested
@@ -17,279 +16,96 @@ mod aero {
 
 use aero::{AeroParser, Rule};
 
-lazy_static! {
-    static ref PRATT_PARSER: PrattParser<Rule> = {
-        use pest::pratt_parser::{Assoc::*, Op};
-        use Rule::*;
-
-        let prefix = Op::<Rule>::prefix;
-        let infix = Op::<Rule>::infix;
-        let postfix = Op::<Rule>::postfix;
-
-        PrattParser::new()
-            .op(infix(BitOr, Left) | infix(BoolOr, Left) | infix(TyOr, Left))
-            .op(infix(BitXor, Left))
-            .op(infix(TyAnd, Left) | infix(BoolAnd, Left) | infix(TyAnd, Left))
-            .op(infix(Eq, Left) | infix(Ne, Left))
-            .op(infix(Lt, Left) | infix(Gt, Left) | infix(Le, Left) | infix(Ge, Left))
-            .op(infix(BitShl, Left) | infix(BitShr, Left))
-            .op(infix(Add, Left) | infix(Sub, Left))
-            .op(infix(Mul, Left) | infix(Div, Left) | infix(Rem, Left))
-            .op(infix(Pow, Left))
-            .op(prefix(BitNot) | prefix(BoolNot) | prefix(Pos) | prefix(Neg) | prefix(Pin))
-            .op(postfix(Opt) | postfix(Res))
-    };
-}
-
 pub fn parse<'a>(input: &'a str) -> Source {
-    let mut pairs = AeroParser::parse(Rule::Source, input).unwrap_or_else(|e| {
+    let mut pairs = AeroParser::parse(aero::Rule::Source, input).unwrap_or_else(|e| {
         eprintln!("{}", e);
         exit(1);
     });
 
-    println!("{:#?}\n", pairs);
-
     let source_pair = pairs.next().unwrap();
 
     let span = get_span(&source_pair);
-    let defs = source_pair
-        .into_inner()
-        .take_while(|p| p.as_rule() != Rule::EOI)
-        .map(map_def)
-        .collect();
+    let forms = parse_forms(
+        source_pair
+            .into_inner()
+            .take_while(|p| p.as_rule() != Rule::EOI),
+    );
 
-    Source { span, defs }
+    Source { span, forms }
 }
 
-fn map_def(pair: Pair<Rule>) -> Form<Def> {
+fn parse_forms<'a, T: Iterator<Item = Pair<'a, Rule>>>(pairs: T) -> Vec<Form<'a>> {
+    pairs.map(parse_form).collect()
+}
+
+fn parse_form(pair: Pair<Rule>) -> Form {
     let span = get_span(&pair);
-    let value = match pair.as_rule() {
-        Rule::MainDef => {
-            let body = pair.into_inner().next().map(map_expr);
-
-            Def::Main { body }
-        }
-        _ => todo!("def not handled yet"),
+    let data = match pair.as_rule() {
+        Rule::Int => FormData::Int(parse_int_data(pair.into_inner())),
+        Rule::Str => FormData::Str(parse_str_data(pair.into_inner())),
+        Rule::Label => FormData::Label(parse_name(pair.into_inner())),
+        Rule::Sym => FormData::Sym(parse_name(pair.into_inner())),
+        Rule::Ident => FormData::Ident(parse_name(pair.into_inner())),
+        Rule::GlobalPath => FormData::GlobalPath(parse_path_segments(pair.into_inner())),
+        Rule::LocalPath => FormData::LocalPath(parse_path_segments(pair.into_inner())),
+        Rule::Discard => FormData::Discard(String::from(span.str)),
+        Rule::Parens => FormData::Parens(parse_forms(pair.into_inner())),
+        Rule::Bracks => FormData::Bracks(parse_forms(pair.into_inner())),
+        Rule::Braces => FormData::Braces(parse_forms(pair.into_inner())),
+        Rule::Op => FormData::Op(String::from(span.str)),
+        Rule::Prefix => FormData::Prefix(String::from(span.str)),
+        Rule::Infix => FormData::Infix(String::from(span.str)),
+        Rule::Postfix => FormData::Postfix(String::from(span.str)),
+        Rule::Sep => FormData::Sep,
+        _ => unreachable!(),
     };
 
-    Form { span, value }
+    Form { span, data }
 }
 
-fn map_expr(pair: Pair<Rule>) -> Form<Expr> {
-    if pair.as_rule() == Rule::Block {
-        let span = get_span(&pair);
-        let exprs: Vec<_> = pair.into_inner().map(map_expr).collect();
-        let value = Expr::Block { exprs };
+fn parse_int_data<'a, T: Iterator<Item = Pair<'a, Rule>>>(mut pairs: T) -> IntData {
+    let mut pair = pairs.next().unwrap();
 
-        return Form { span, value };
-    }
-
-    let str = pair.as_str();
-    let start = pair.as_span().start();
-
-    if pair.as_rule() == Rule::BindingForm {
-        // This will only happen when we're in a block. Bindings are at the same
-        // level as infix_forms so it's handled here. The pratt parser always
-        // will parse everything as an expression, so we manually parse all the
-        // patterns.
-        let mut binding_pairs = pair.into_inner().rev();
-        let mut expr = map_expr(binding_pairs.next().unwrap());
-
-        loop {
-            if let Some(op_pair) = binding_pairs.next() {
-                let op_span = get_span(&op_pair);
-                let op_value = match op_pair.as_rule() {
-                    Rule::Assign => BindingOp::Assign,
-                    Rule::ArrowL => BindingOp::ArrowL,
-                    _ => unreachable!(),
-                };
-                let op = Form {
-                    span: op_span,
-                    value: op_value,
-                };
-
-                let pat_pair = binding_pairs.next().unwrap();
-                let pat = map_pat(pat_pair);
-
-                // Must manually construct the span here.
-                let expr_start = pat.span.range.0;
-                let expr_stop = expr.span.range.1;
-                let expr_span = Span {
-                    str: &str[(expr_start as usize - start)..(expr_stop as usize - start)],
-                    range: (expr_start, expr_stop),
-                    pos: pat.span.pos,
-                };
-                let expr_value = Expr::Binding {
-                    pat,
-                    op,
-                    expr: Box::new(expr),
-                };
-                expr = Form {
-                    span: expr_span,
-                    value: expr_value,
-                };
-            } else {
-                return expr;
-            }
+    let is_positive = match pair.as_rule() {
+        Rule::IntSignPos => {
+            pair = pairs.next().unwrap();
+            true
         }
-    }
-
-    let mut expr = PRATT_PARSER
-        .map_primary(map_expr_primary)
-        .map_prefix(map_expr_prefix)
-        .map_infix(map_expr_infix)
-        .parse(pair.into_inner());
-
-    // When creating prefix and infix expressions, we don't have access to the
-    // whole span from the pairs. After parsing them, go back and fix the string
-    // references using the ranges.
-    fn fix_spans<'a>(expr: &mut Form<'a, Expr<'a>>, str: &'a str, start: usize) {
-        if let Expr::Prefix { op: _, expr: inner } = &mut expr.value {
-            expr.span.str =
-                &str[(expr.span.range.0 as usize - start)..(expr.span.range.1 as usize - start)];
-
-            fix_spans(inner, str, start);
-        } else if let Expr::Infix { left, op: _, right } = &mut expr.value {
-            expr.span.str =
-                &str[(expr.span.range.0 as usize - start)..(expr.span.range.1 as usize - start)];
-
-            fix_spans(left, str, start);
-            fix_spans(right, str, start);
+        Rule::IntSignNeg => {
+            pair = pairs.next().unwrap();
+            false
         }
-    }
+        _ => true,
+    };
 
-    fix_spans(&mut expr, str, start);
-    expr
+    let value = pair.as_str().replace("_", "").parse().unwrap();
+
+    if is_positive {
+        IntData::UntypedPos(value)
+    } else {
+        IntData::UntypedNeg(value as i128)
+    }
 }
 
-fn map_expr_primary(pair: Pair<Rule>) -> Form<Expr> {
+fn parse_str_data<'a, T: Iterator<Item = Pair<'a, Rule>>>(mut pairs: T) -> StrData {
+    let literal = String::from(pairs.next().unwrap().as_str());
+
+    StrData::Literal(literal)
+}
+
+fn parse_name<'a, T: Iterator<Item = Pair<'a, Rule>>>(mut pairs: T) -> String {
+    String::from(pairs.next().unwrap().as_str())
+}
+
+fn parse_path_segments<'a, T: Iterator<Item = Pair<'a, Rule>>>(pairs: T) -> Vec<PathSegment<'a>> {
+    pairs.map(parse_path_segment).collect()
+}
+
+fn parse_path_segment(pair: Pair<Rule>) -> PathSegment {
     let span = get_span(&pair);
-    let value = match pair.as_rule() {
-        Rule::IntLit => {
-            let int = pair
-                .as_str()
-                .parse::<u64>()
-                .expect("failed to parse int literal");
+    let value = String::from(span.str);
 
-            Expr::IntLit(int)
-        }
-        Rule::StrLit => {
-            let mut content = String::new();
-
-            for p in pair.into_inner() {
-                match p.as_rule() {
-                    Rule::StrSegment => content.push_str(p.as_str()),
-                    _ => unreachable!(),
-                }
-            }
-
-            Expr::StrLit(content)
-        }
-        Rule::Ident => Expr::Ident(String::from(pair.as_str())),
-        Rule::LogExpr => {
-            let mut expr_pairs = pair.into_inner();
-            let expr = map_expr(expr_pairs.next().unwrap());
-
-            if expr_pairs.next().is_some() {
-                panic!("unexpected form in log")
-            }
-
-            Expr::Log {
-                message: Box::new(expr),
-            }
-        }
-        _ => todo!("primary expr not handled yet"),
-    };
-
-    Form { span, value }
-}
-
-fn map_expr_prefix<'a>(pair: Pair<'a, Rule>, expr: Form<'a, Expr<'a>>) -> Form<'a, Expr<'a>> {
-    let op_span = get_span(&pair);
-    let op_value = match pair.as_rule() {
-        Rule::BitNot => PrefixOp::BitNot,
-        Rule::BoolNot => PrefixOp::BoolNot,
-        Rule::Pos => PrefixOp::Pos,
-        Rule::Neg => PrefixOp::Neg,
-        _ => panic!("unexpected prefix operator"),
-    };
-
-    let span = Span {
-        str: "", // Determined after parsing whole pratt expression.
-        range: (op_span.range.0, expr.span.range.1),
-        pos: op_span.pos,
-    };
-    let value = Expr::Prefix {
-        op: Form {
-            span: op_span,
-            value: op_value,
-        },
-        expr: Box::new(expr),
-    };
-
-    Form { span, value }
-}
-
-fn map_expr_infix<'a>(
-    left: Form<'a, Expr<'a>>,
-    pair: Pair<'a, Rule>,
-    right: Form<'a, Expr<'a>>,
-) -> Form<'a, Expr<'a>> {
-    let op_span = get_span(&pair);
-    let op_value = match pair.as_rule() {
-        Rule::BitAnd => InfixOp::BitAnd,
-        Rule::BitOr => InfixOp::BitOr,
-        Rule::BitXor => InfixOp::BitXor,
-        Rule::BitShl => InfixOp::BitShl,
-        Rule::BitShr => InfixOp::BitShr,
-        Rule::BoolAnd => InfixOp::BoolAnd,
-        Rule::BoolOr => InfixOp::BoolOr,
-        Rule::Eq => InfixOp::Eq,
-        Rule::Ne => InfixOp::Ne,
-        Rule::Le => InfixOp::Le,
-        Rule::Ge => InfixOp::Ge,
-        Rule::Lt => InfixOp::Lt,
-        Rule::Gt => InfixOp::Gt,
-        Rule::Add => InfixOp::Add,
-        Rule::Sub => InfixOp::Sub,
-        Rule::Mul => InfixOp::Mul,
-        Rule::Div => InfixOp::Div,
-        Rule::Rem => InfixOp::Rem,
-        Rule::Pow => InfixOp::Pow,
-        _ => panic!("unexpected infix operator"),
-    };
-
-    let span = Span {
-        str: "", // Determined after parsing whole pratt expression.
-        range: (left.span.range.0, right.span.range.1),
-        pos: left.span.pos,
-    };
-    let value = Expr::Infix {
-        left: Box::new(left),
-        op: Form {
-            span: op_span,
-            value: op_value,
-        },
-        right: Box::new(right),
-    };
-
-    Form::<'a> { span, value }
-}
-
-fn map_pat(pair: Pair<Rule>) -> Form<Pat> {
-    PRATT_PARSER
-        .map_primary(map_pat_primary)
-        .parse(pair.into_inner())
-}
-
-fn map_pat_primary(pair: Pair<Rule>) -> Form<Pat> {
-    let span = get_span(&pair);
-    let value = match pair.as_rule() {
-        Rule::Ident => Pat::Ident(String::from(pair.as_str())),
-        _ => todo!("pimary pat not yet handled"),
-    };
-
-    Form { span, value }
+    PathSegment { span, value }
 }
 
 fn get_span<'a>(pair: &Pair<'a, Rule>) -> Span<'a> {
